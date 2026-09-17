@@ -27,7 +27,10 @@ class PostPublishedMail extends Mailable
     public function content(): Content
     {
         return new Content(
-            view: 'emails.post-published',
+            htmlString: <<<HTML
+                <h2>{$title}</h2>
+                <p>{$description}</p>
+            HTML,
         );
     }
 }
