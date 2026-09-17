@@ -26,6 +26,9 @@ class PostPublishedMail extends Mailable
 
     public function content(): Content
     {
+        $title = e($this->post->title);
+        $description = nl2br(e($this->post->description));
+
         return new Content(
             htmlString: <<<HTML
                 <h2>{$title}</h2>
