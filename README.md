@@ -1,160 +1,214 @@
 # Subscription Platform API
 
-A Laravel REST API for subscribing users to websites and notifying them by email whenever a new post is published. The application is API-only: it does not include authentication or a frontend.
+A simple RESTful API (Laravel + MySQL) where users can subscribe to websites and receive an
+email whenever a new post is published on a website they're subscribed to. No authentication
+is required — subscription is done directly by email address.
 
-## Requirements
-
-- PHP 8.2+ (compatible with the required PHP 7.* or 8.* range)
+## Tech Stack
+- PHP 8.2+
 - Laravel 12
-- Composer
-- MySQL 8.0+ (or a compatible MySQL server)
-- A mail service, or the local `log` mail driver for development
+- MySQL 8+
+- Queues (`database` driver by default)
 
-## Features
-
-- Multiple websites can be managed in the system.
-- Users can subscribe to a particular website.
-- Posts can be created for a particular website.
-- A console command checks all websites for new posts and queues email notifications.
-- Queue workers send notifications in the background.
-- Each subscriber receives a given post only once, even if the command is run repeatedly.
-- Validation prevents invalid websites, posts, email addresses, and duplicate subscriptions.
-- No authentication is required by the API.
-
-## Installation
-
-1. Clone the repository:
-
-   ```bash
-   git clone https://github.com/ahmedabdelaziz00/test.git
-   cd test
-   ```
-
-2. Install PHP dependencies:
-
-   ```bash
-   composer install
-   ```
-
-3. Create the environment file and application key:
-
-   ```bash
-   cp .env.example .env
-   php artisan key:generate
-   ```
-
-4. Create a MySQL database, then configure `.env`:
-
-   ```dotenv
-   APP_NAME="Subscription Platform"
-   APP_ENV=local
-   APP_DEBUG=true
-   APP_URL=http://localhost
-
-   DB_CONNECTION=mysql
-   DB_HOST=127.0.0.1
-   DB_PORT=3306
-   DB_DATABASE=subscription_platform
-   DB_USERNAME=root
-   DB_PASSWORD=
-   ```
-
-5. Configure mail delivery. For local development, emails can be written to the Laravel log:
-
-   ```dotenv
-   MAIL_MAILER=log
-   MAIL_FROM_ADDRESS="hello@example.com"
-   MAIL_FROM_NAME="${APP_NAME}"
-   ```
-
-   For a real SMTP provider, replace `MAIL_MAILER` and provide the corresponding host, port, username, password, and encryption settings.
-
-6. Run the migrations and optional seeders:
-
-   ```bash
-   php artisan migrate --seed
-   ```
-
-7. Start the API:
-
-   ```bash
-   php artisan serve
-   ```
-
-   The API will be available at `http://localhost:8000`.
-
-## API usage
-
-All endpoints accept and return JSON. No bearer token or other authentication is required.
-
-### Create a post for a website
-
-```http
-POST /api/websites/{website}/posts
-Content-Type: application/json
-
-{
-  "title": "Example post",
-  "description": "The post description."
-}
-```
-
-The website must exist, and both `title` and `description` are required. A successful request creates the post; notifications are sent by the queue workflow described below.
-
-### Subscribe a user to a website
-
-```http
-POST /api/websites/{website}/subscriptions
-Content-Type: application/json
-
-{
-  "email": "subscriber@example.com"
-}
-```
-
-The website must exist, the email address must be valid, and the same email cannot be subscribed to the same website more than once.
-
-Validation failures return an appropriate `4xx` response with JSON validation errors. Successful create requests return a `2xx` response containing the created resource.
-
-## Sending notifications
-
-Run the notification command to find all new posts across all websites and queue email jobs for subscribers who have not previously received those posts:
+## 1. Setup
 
 ```bash
-php artisan subscriptions:send-new-posts
+# 1. Clone and install dependencies
+git clone https://github.com/ahmedabdelaziz00/test.git
+cd test
+composer install
+
+# 2. Environment
+cp .env.example .env
+php artisan key:generate
 ```
 
-Start a queue worker in a separate terminal so queued notifications are processed:
+Edit `.env` and set MySQL credentials:
+
+```env
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=subscription_platform
+DB_USERNAME=root
+DB_PASSWORD=
+
+QUEUE_CONNECTION=database
+MAIL_MAILER=log   # emails are written to storage/logs/laravel.log instead of being sent for real
+```
+
+```bash
+# 3. Create the database, then run migrations + seeders
+php artisan migrate --seed
+
+# 4. Serve the app
+php artisan serve
+```
+
+## 2. Sending Emails (Queue Worker)
+
+New posts are queued for delivery automatically (via an event listener) as soon as they're
+created. You need a running queue worker for them to actually go out:
 
 ```bash
 php artisan queue:work
 ```
 
-The command is safe to run repeatedly. A delivery record is used to ensure that no duplicate story is sent to a subscriber. With the database queue driver, the queue tables must also be migrated before starting the worker.
+There's also a standalone Artisan command that scans **all** websites and queues emails for
+**any** post that hasn't been sent yet to a given subscriber (catch-up / safety net, useful if
+the worker was down or a job failed):
 
-For scheduled delivery, configure the command in the application's scheduler and run Laravel's scheduler process according to the deployment environment.
+```bash
+php artisan emails:send
+```
 
-## Testing
+You can schedule this command to run periodically (e.g. every 5 minutes) via
+`routes/console.php` using Laravel's scheduler, then run:
 
-Run the automated test suite with:
+```bash
+php artisan schedule:work
+```
+
+## 3. Running Tests
 
 ```bash
 php artisan test
 ```
 
-## Project conventions
+## 4. API Endpoints
 
-- Database schema is managed through Laravel migrations.
-- Website, post, subscriber, and notification-delivery data is persisted in MySQL.
-- Email delivery is handled by queued jobs rather than blocking API requests.
-- The API contains no frontend pages and does not require authentication.
+Base URL: `/api/v1`
 
-## Troubleshooting
+All responses are JSON with the shape:
+```json
+{ "status": "success" | "error", "data": ..., "message": "..." }
+```
 
-- If emails do not appear in a mailbox while using `MAIL_MAILER=log`, inspect `storage/logs/laravel.log`.
-- If notifications remain queued, confirm that `php artisan queue:work` is running and that the configured queue connection is available.
-- If migrations fail, verify the MySQL credentials and ensure the configured database already exists.
+### Websites
 
-## License
+| Method | Endpoint         | Description         |
+|--------|------------------|----------------------|
+| GET    | `/websites`      | List all websites    |
 
-This project is licensed under the [MIT License](https://opensource.org/licenses/MIT).
+**GET `/api/v1/websites`**
+```json
+{
+  "status": "success",
+  "data": [
+    { "id": 1, "name": "Tech Blog", "url": "https://techblog.example.com" }
+  ]
+}
+```
+
+---
+
+### Posts
+
+| Method | Endpoint                              | Description                          |
+|--------|----------------------------------------|---------------------------------------|
+| GET    | `/websites/{website}/posts`            | List all posts for a website          |
+| GET    | `/websites/{website}/posts/{post}`     | Get a single post                     |
+| POST   | `/websites/{website}/posts`            | Create a post (triggers emails)       |
+
+**POST `/api/v1/websites/{website}/posts`**
+
+Body:
+```json
+{
+  "title": "We just launched v2!",
+  "description": "Here is everything that's new in this release..."
+}
+```
+
+| Field       | Rules                        |
+|-------------|-------------------------------|
+| `title`     | required, string, max:255     |
+| `description` | required, string           |
+
+Response `201`:
+```json
+{
+  "status": "success",
+  "data": {
+    "id": 10,
+    "website_id": 1,
+    "title": "We just launched v2!",
+    "description": "Here is everything that's new in this release..."
+  }
+}
+```
+
+Creating a post automatically dispatches an email (queued) to every current subscriber of
+that website.
+
+Response `404` if `{website}` doesn't exist.
+
+---
+
+### Subscriptions
+
+| Method | Endpoint                                   | Description                       |
+|--------|----------------------------------------------|------------------------------------|
+| POST   | `/websites/{website}/subscribe`               | Subscribe an email to a website    |
+| DELETE | `/websites/{website}/unsubscribe`             | Unsubscribe an email from a website|
+| GET    | `/websites/{website}/subscribers`             | List a website's subscribers       |
+
+**POST `/api/v1/websites/{website}/subscribe`**
+
+Body:
+```json
+{
+  "name": "Ahmed Abdelaziz",
+  "email": "ahmed@example.com"
+}
+```
+
+| Field   | Rules                          |
+|---------|----------------------------------|
+| `name`  | required, string, max:255        |
+| `email` | required, valid email, max:255   |
+
+- `201` — subscribed successfully.
+- `409` — this email is already subscribed to this website.
+- `404` — `{website}` doesn't exist.
+
+If the email hasn't been seen before, a `User` record is created automatically (no password /
+registration flow — the platform has no authentication).
+
+**DELETE `/api/v1/websites/{website}/unsubscribe`**
+
+Body:
+```json
+{ "email": "ahmed@example.com" }
+```
+
+- `200` — unsubscribed successfully.
+- `404` — user not found, or user is not subscribed to this website.
+
+**GET `/api/v1/websites/{website}/subscribers`**
+
+Response:
+```json
+{
+  "status": "success",
+  "data": [
+    { "id": 3, "name": "Ahmed Abdelaziz", "email": "ahmed@example.com" }
+  ]
+}
+```
+
+> **Note:** since there's no authentication, this endpoint returns subscriber PII (names and
+> emails) to anyone who can guess a website id. That's acceptable for this assessment's brief,
+> but in a real deployment this endpoint (and `subscribe`/`unsubscribe`) should sit behind auth
+> and rate limiting.
+
+## 5. Design Notes
+
+- **No duplicate emails**: enforced at three layers — a unique DB constraint on
+  `sent_emails(post_id, user_id)`, a check inside the queued job before sending, and the
+  `emails:send` command only queuing pairs that don't already have a `sent_emails` row.
+- **Two delivery paths**: an `PostPublished` event + listener queues emails immediately when a
+  post is created; the `emails:send` command is a separate catch-up sweep across all websites,
+  satisfying the brief's requirement independently of the event path.
+- **Queued delivery**: all email sending happens in `SendPostEmailJob` (`ShouldQueue`), never
+  synchronously in a request/response cycle.
